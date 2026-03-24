@@ -1,0 +1,24 @@
+diff --git a/build.sbt b/build.sbt
+index 29748eb7..fbb54be8 100644
+--- a/build.sbt
++++ b/build.sbt
+@@ -226,6 +226,7 @@ lazy val chipyard = {
+     "ara" -> ara,
+     "saturn" -> saturn,
+     "tacit" -> tacit,
++    "sha3" -> sha3,
+     "gemmini" -> gemmini,
+     "nvdla" -> nvdla,
+     "radiance" -> radiance,
+@@ -364,6 +365,11 @@ lazy val radiance = withInitCheck((project in file("generators/radiance")), "rad
+   ))
+   .settings(commonSettings)
+
++lazy val sha3 = (project in file("generators/sha3"))
++  .dependsOn(rocketchip, midas_target_utils)
++  .settings(libraryDependencies ++= rocketLibDeps.value)
++  .settings(commonSettings)
++
+ lazy val gemmini = withInitCheck(freshProject("gemmini", file("generators/gemmini")), "gemmini")
+   .dependsOn(rocketchip)
+   .settings(libraryDependencies ++= rocketLibDeps.value)
