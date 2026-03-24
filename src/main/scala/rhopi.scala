@@ -2,7 +2,8 @@
 //authors: Colin Schmidt, Adam Izraelevitz
 package sha3
 
-import Chisel._
+import chisel3._
+import chisel3.util.Cat
 //import chiseltest.iotesters.PeekPokeTester
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.ArrayBuffer
@@ -10,10 +11,10 @@ import scala.util.Random
 
 class RhoPiModule(val W : Int = 64) extends Module {
   //val W = 64
-  val io = new Bundle { 
-    val state_i = Vec(25, Bits(INPUT, W))
-    val state_o = Vec(25, Bits(OUTPUT,W))
-  }
+  val io = IO(new Bundle { 
+    val state_i = Input(Vec(25, UInt(W.W)))
+    val state_o = Output(Vec(25, UInt(W.W)))
+  })
 
   //TODO: c code uses falttened rep for this
 /*
@@ -36,7 +37,7 @@ class RhoPiModule(val W : Int = 64) extends Module {
 
   for(i <- 0 until 5) {
     for(j <- 0 until 5) {
-      val temp = Wire(Bits())
+      val temp = Wire(UInt(W.W))
       if((RHOPI.tri(i*5+j)%W) == 0){
         temp := io.state_i(i*5+j)
       }else{

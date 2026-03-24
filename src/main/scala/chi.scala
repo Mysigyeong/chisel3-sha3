@@ -2,7 +2,7 @@
 //authors: Colin Schmidt, Adam Izraelevitz
 package sha3
 
-import Chisel._
+import chisel3._
 //import chiseltest.iotesters.PeekPokeTester
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.ArrayBuffer
@@ -10,10 +10,10 @@ import scala.util.Random
 
 class ChiModule(val W: Int = 64) extends Module {
   //val W = 64
-  val io = new Bundle { 
-    val state_i = Vec(5*5, Bits(INPUT,W))
-    val state_o = Vec(5*5, Bits(OUTPUT,W))
-  }
+  val io = IO(new Bundle { 
+    val state_i = Input(Vec(5*5, UInt(W.W)))
+    val state_o = Output(Vec(5*5, UInt(W.W)))
+  })
 
   //TODO: c code uses falttened rep for this
   for(i <- 0 until 5) {

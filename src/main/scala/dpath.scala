@@ -2,8 +2,8 @@
 //authors: Colin Schmidt, Adam Izraelevitz
 package sha3
 
-import Chisel._
-import scala.collection.mutable.HashMap
+import chisel3._
+import chisel3.util._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 import org.chipsalliance.cde.config.Parameters
@@ -17,18 +17,18 @@ class DpathModule(val W: Int, val S: Int)(implicit p: Parameters) extends Module
   val hash_size_words = 256/W
   val bytes_per_word = W/8
 
-  val io = new Bundle { 
-    val absorb = Bool(INPUT)
-    val init   = Bool(INPUT)
-    val write  = Bool(INPUT)
-    val round  = UInt(INPUT,width=5)
-    val stage  = UInt(INPUT,width=log2Up(S))
-    val aindex = UInt(INPUT,width=log2Up(round_size_words))
-    val message_in = Bits(INPUT, width = W)
-    val hash_out = Vec(hash_size_words, Bits(OUTPUT, width = W))
-  }
+  val io = IO(new Bundle { 
+    val absorb = Input(Bool())
+    val init   = Input(Bool())
+    val write  = Input(Bool())
+    val round  = Input(UInt(5.W))
+    val stage  = Input(UInt(log2Up(S).W))
+    val aindex = Input(UInt(log2Up(round_size_words).W))
+    val message_in = Input(UInt(W.W))
+    val hash_out = Output(Vec(hash_size_words, UInt(W.W)))
+  })
 
-  val state = Reg(init=Vec.fill(5*5){ Bits(0, width = W)})
+  val state = RegInit(VecInit(Seq.fill(5*5)(0.U(W.W))))
 
   //submodules
   val theta = Module(new ThetaModule(W)).io
@@ -37,8 +37,8 @@ class DpathModule(val W: Int, val S: Int)(implicit p: Parameters) extends Module
   val iota  = Module(new IotaModule(W))
 
   //default
-  theta.state_i := Vec.fill(25){Bits(0,W)}
-  iota.io.round     := UInt(0)
+  theta.state_i := VecInit(Seq.fill(25)(0.U(W.W)))
+  iota.io.round     := 0.U
 
   //connect submodules to each other
     if(S == 1){
@@ -72,7 +72,7 @@ class DpathModule(val W: Int, val S: Int)(implicit p: Parameters) extends Module
   
   //try moving mux out
   switch(io.stage){
-      is(UInt(0)){
+      is(0.U){
         if(S == 1){
           state := iota.io.state_o
         }else if(S == 2){
@@ -81,19 +81,19 @@ class DpathModule(val W: Int, val S: Int)(implicit p: Parameters) extends Module
           state := theta.state_o
         }
       }
-      is(UInt(1)){
+      is(1.U){
         if(S == 2){
           state := iota.io.state_o
         }else if(S == 4){
           state := rhopi.state_o
         }
       }
-      is(UInt(2)){
+      is(2.U){
         if(S == 4){
           state := chi.state_o
         }
       }
-      is(UInt(3)){
+      is(3.U){
         if(S == 4){
           state := iota.io.state_o
         }
@@ -105,13 +105,13 @@ class DpathModule(val W: Int, val S: Int)(implicit p: Parameters) extends Module
     if(p(Sha3PrintfEnable)){
       printf(midas.targetutils.SynthesizePrintf("SHA3 finished an iteration with index %d and message %x\n", io.aindex, io.message_in))
     }
-    when(io.aindex < UInt(round_size_words)){
-      state((io.aindex%UInt(5))*UInt(5)+(io.aindex/UInt(5))) := 
-        state((io.aindex%UInt(5))*UInt(5)+(io.aindex/UInt(5))) ^ io.message_in
+    when(io.aindex < round_size_words.U){
+      state((io.aindex%5.U)*5.U+(io.aindex/5.U)) := 
+        state((io.aindex%5.U)*5.U+(io.aindex/5.U)) ^ io.message_in
     }
   }
 
-  val hash_res = Wire(Vec(hash_size_words, Bits(width = W)))
+  // val hash_res = Wire(Vec(hash_size_words, UInt(W.W)))
   for( i <- 0 until hash_size_words){
     io.hash_out(i) := state(i*5)
   }
@@ -123,10 +123,10 @@ class DpathModule(val W: Int, val S: Int)(implicit p: Parameters) extends Module
 
   //initialize state to 0 for new hashes or at reset
   when(io.init){
-    state := Vec.fill(5*5){Bits(0, width = W)}
+    state := VecInit(Seq.fill(5*5)(0.U(W.W)))
   }
 
-  when(reset){
-    state := Vec.fill(5*5){Bits(0, width = W)}
+  when(reset.asBool){
+    state := VecInit(Seq.fill(5*5)(0.U(W.W)))
   }
 }

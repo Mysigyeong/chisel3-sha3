@@ -2,12 +2,11 @@
 //authors: Colin Schmidt, Adam Izraelevitz
 package sha3
 
-import Chisel._
+import chisel3._
+import chisel3.util._
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
-import Chisel.ImplicitConversions._
-import scala.collection.mutable.HashMap
 import freechips.rocketchip.tile.HasCoreParameters
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 import org.chipsalliance.cde.config._
@@ -22,112 +21,112 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
   val hash_size_words = 256/W
   val bytes_per_word = W/8
 
-  val io = new Bundle {
-    val rocc_req_val      = Bool(INPUT)
-    val rocc_req_rdy      = Bool(OUTPUT)
-    val rocc_funct        = Bits(INPUT, 2)
-    val rocc_rs1          = Bits(INPUT, 64)
-    val rocc_rs2          = Bits(INPUT, 64)
-    val rocc_rd           = Bits(INPUT, 5)
+  val io = IO(new Bundle {
+    val rocc_req_val      = Input(Bool())
+    val rocc_req_rdy      = Output(Bool())
+    val rocc_funct        = Input(UInt(2.W))
+    val rocc_rs1          = Input(UInt(64.W))
+    val rocc_rs2          = Input(UInt(64.W))
+    val rocc_rd           = Input(UInt(5.W))
 
-    val busy              = Bool(OUTPUT)
+    val busy              = Output(Bool())
 
-    val dmem_req_val      = Bool(OUTPUT)
-    val dmem_req_rdy      = Bool(INPUT)
-    val dmem_req_tag      = Bits(OUTPUT, coreParams.dcacheReqTagBits)
-    val dmem_req_addr     = Bits(OUTPUT, coreMaxAddrBits)
-    val dmem_req_cmd      = Bits(OUTPUT, M_SZ)
-    val dmem_req_size     = Bits(OUTPUT, log2Ceil(coreDataBytes + 1))
+    val dmem_req_val      = Output(Bool())
+    val dmem_req_rdy      = Input(Bool())
+    val dmem_req_tag      = Output(UInt(coreParams.dcacheReqTagBits.W))
+    val dmem_req_addr     = Output(UInt(coreMaxAddrBits.W))
+    val dmem_req_cmd      = Output(UInt(M_SZ.W))
+    val dmem_req_size     = Output(UInt(log2Ceil(coreDataBytes + 1).W))
 
-    val dmem_resp_val     = Bool(INPUT)
-    val dmem_resp_tag     = Bits(INPUT, 7)
-    val dmem_resp_data    = Bits(INPUT, W)
+    val dmem_resp_val     = Input(Bool())
+    val dmem_resp_tag     = Input(UInt(7.W))
+    val dmem_resp_data    = Input(UInt(W.W))
 
-    val sfence            = Bool(OUTPUT)
+    val sfence            = Output(Bool())
 
     //Sha3 Specific signals
-    val round       = UInt(OUTPUT,width=5)
-    val stage       = UInt(OUTPUT,width=log2Up(S))
-    val absorb      = Bool(OUTPUT)
-    val aindex      = UInt(OUTPUT,width=log2Up(round_size_words))
-    val init        = Bool(OUTPUT)
-    val write       = Bool(OUTPUT)
-    val windex      = UInt(OUTPUT,width=log2Up(hash_size_words+1))
+    val round       = Output(UInt(5.W))
+    val stage       = Output(UInt(log2Up(S).W))
+    val absorb      = Output(Bool())
+    val aindex      = Output(UInt(log2Up(round_size_words).W))
+    val init        = Output(Bool())
+    val write       = Output(Bool())
+    val windex      = Output(UInt(log2Up(hash_size_words+1).W))
 
-    val buffer_out  = Bits(OUTPUT,width=W)
-  }
+    val buffer_out  = Output(UInt(W.W))
+  })
 
   //RoCC HANDLER
   //rocc pipe state
-  val r_idle :: r_eat_addr :: r_eat_len :: Nil = Enum(UInt(), 3)
+  val r_idle :: r_eat_addr :: r_eat_len :: Nil = Enum(3)
 
-  val msg_addr = Reg(init = UInt(0,64))
-  val hash_addr= Reg(init = UInt(0,64))
-  val msg_len  = Reg(init = UInt(0,64))
+  val msg_addr = RegInit(0.U(64.W))
+  val hash_addr= RegInit(0.U(64.W))
+  val msg_len  = RegInit(0.U(64.W))
 
-  val busy = Reg(init=Bool(false))
+  val busy = RegInit(false.B)
 
-  val rocc_s = Reg(init=r_idle)
+  val rocc_s = RegInit(r_idle)
   //register inputs
-  val rocc_req_val_reg = Reg(next=io.rocc_req_val)
-  val rocc_funct_reg = Reg(init = Bits(0,2))
+  val rocc_req_val_reg = RegNext(io.rocc_req_val)
+  val rocc_funct_reg = RegInit(0.U(2.W))
   rocc_funct_reg := io.rocc_funct
-  val rocc_rs1_reg = Reg(next=io.rocc_rs1)
-  val rocc_rs2_reg = Reg(next=io.rocc_rs2)
-  val rocc_rd_reg = Reg(next=io.rocc_rd)
+  val rocc_rs1_reg = RegNext(io.rocc_rs1)
+  val rocc_rs2_reg = RegNext(io.rocc_rs2)
+  val rocc_rd_reg = RegNext(io.rocc_rd)
 
-  val dmem_resp_val_reg = Reg(next=io.dmem_resp_val)
-  val dmem_resp_tag_reg = Reg(next=io.dmem_resp_tag)
+  val dmem_resp_val_reg = RegNext(io.dmem_resp_val)
+  val dmem_resp_tag_reg = RegNext(io.dmem_resp_tag)
   //memory pipe state
   val fast_mem = p(Sha3FastMem)
-  val m_idle :: m_read :: m_wait :: m_pad :: m_absorb :: Nil = Enum(UInt(), 5)
-  val mem_s = Reg(init=m_idle)
+  val m_idle :: m_read :: m_wait :: m_pad :: m_absorb :: Nil = Enum(5)
+  val mem_s = RegInit(m_idle)
 
   val buffer_sram = p(Sha3BufferSram)
   //SRAM Buffer
-  val buffer_mem = Mem(round_size_words, UInt(width = W))
+  val buffer_mem = SyncReadMem(round_size_words, UInt(W.W))
   //Flip-Flop buffer
-  val buffer = Reg(init=Vec.fill(round_size_words) { 0.U(W.W) })
+  val buffer = RegInit(VecInit(Seq.fill(round_size_words)(0.U(W.W))))
 
-  val buffer_raddr = Reg(UInt(width = log2Up(round_size_words)))
-  val buffer_wen = Wire(Bool());
-  buffer_wen := Bool(false) //Defaut value
-  val buffer_waddr = Wire(UInt(width = W)); buffer_waddr := UInt(0)
-  val buffer_wdata = Wire(UInt(width = W)); buffer_wdata := UInt(0)
-  val buffer_rdata = Bits(width = W);
+  val buffer_raddr = Reg(UInt(log2Up(round_size_words).W))
+  val buffer_wen = WireDefault(false.B)
+  val buffer_waddr = WireDefault(0.U(W.W))
+  val buffer_wdata = WireDefault(0.U(W.W))
+  val buffer_rdata = Wire(UInt(W.W))
+  buffer_rdata := 0.U
   if(buffer_sram){
-    when(buffer_wen) { buffer_mem.write(buffer_waddr, buffer_wdata) }
+    when(buffer_wen) { buffer_mem(buffer_waddr) := buffer_wdata }
     buffer_rdata := buffer_mem(buffer_raddr)
   }
 
   //This is used to prevent the pad index from advancing if waiting for the sram to read
   //SRAM reads take 1 cycle
-  val wait_for_sram = Reg(init = Bool(true))
+  val wait_for_sram = RegInit(true.B)
 
-  val buffer_valid = Reg(init = Bool(false))
-  val buffer_count = Reg(init = UInt(0,5))
-  val read    = Reg(init = UInt(0,32))
-  val hashed  = Reg(init = UInt(0,32))
-  val areg    = Reg(init = Bool(false))
-  val mindex  = Reg(init = UInt(0,5))
-  val windex  = Reg(init = UInt(0,log2Up(hash_size_words+1)))
-  val aindex  = Reg(init = UInt(0,log2Up(round_size_words)))
-  val pindex  = Reg(init = UInt(0,log2Up(round_size_words)))
-  val writes_done  = Reg( init=Vec.fill(hash_size_words) { Bool(false) })
-  val next_buff_val = Reg(init = Bool(false))
+  val buffer_valid = RegInit(false.B)
+  val buffer_count = RegInit(0.U(5.W))
+  val read    = RegInit(0.U(32.W))
+  val hashed  = RegInit(0.U(32.W))
+  val areg    = RegInit(false.B)
+  val mindex  = RegInit(0.U(5.W))
+  val windex  = RegInit(0.U(log2Up(hash_size_words+1).W))
+  val aindex  = RegInit(0.U(log2Up(round_size_words).W))
+  val pindex  = RegInit(0.U(log2Up(round_size_words).W))
+  val writes_done  = RegInit(VecInit(Seq.fill(hash_size_words)(false.B)))
+  val next_buff_val = RegInit(false.B)
   if(fast_mem){
     next_buff_val := (buffer_count >= mindex) &&
-                     (pindex >= UInt(round_size_words - 1))
+                     (pindex >= (round_size_words - 1).U)
   }else{
-    next_buff_val := ((mindex >= UInt(round_size_words)) ||
+    next_buff_val := ((mindex >= round_size_words.U) ||
                      (read >= msg_len)) &&
-                     (pindex >= UInt(round_size_words - 1))
+                     (pindex >= (round_size_words - 1).U)
   }
 
   //Note that the output of io.aindex is delayed by 1 cycle
-  io.aindex     := Reg(next = aindex)
+  io.aindex     := RegNext(aindex)
   io.absorb     := areg
-  areg          := Bool(false)
+  areg          := false.B
   if(buffer_sram){
     //when(areg) {
     //Note that the aindex used here is one cycle behind that is passed to the datapath (out of phase)
@@ -144,65 +143,65 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
   io.windex     := windex
 
   //misc padding signals
-  val first_pad = Bits(if (p(Sha3Keccak)) "b0000_0001" else "b0000_0110")
-  val last_pad  = Bits("b1000_0000")
+  val first_pad = (if (p(Sha3Keccak)) "b0000_0001" else "b0000_0110").U
+  val last_pad  = "b1000_0000".U
   val both_pad  = first_pad | last_pad
   //last word with message in it
   val words_filled =// if(fast_mem){
-    Mux(mindex > UInt(0), mindex - UInt(1), mindex)
+    Mux(mindex > 0.U, mindex - 1.U, mindex)
   //}else{
     //mindex
   //}
 
   //last byte with message in it
-  val byte_offset = (msg_len)%UInt(bytes_per_word)
+  val byte_offset = (msg_len)%bytes_per_word.U
 
   //hasher state
-  val s_idle :: s_absorb :: s_finish_abs :: s_hash :: s_write :: Nil = Enum(UInt(), 5)
+  val s_idle :: s_absorb :: s_finish_abs :: s_hash :: s_write :: Nil = Enum(5)
 
-  val state = Reg(init=s_idle)
+  val state = RegInit(s_idle)
 
 
-  val rindex = Reg(init = UInt(rounds+1,5))
-  val sindex = Reg(init = UInt(0,log2Up(S)))
+  val rindex = RegInit((rounds+1).U(5.W))
+  val sindex = RegInit(0.U(log2Up(S).W))
 
   //default
-  io.rocc_req_rdy := Bool(false)
-  io.init := Bool(false)
+  io.rocc_req_rdy := false.B
+  io.init := false.B
   io.busy := busy
   io.round       := rindex
   io.stage       := sindex
-  io.write       := Bool(true)
-  io.dmem_req_val:= Bool(false)
+  io.write       := true.B
+  io.dmem_req_val:= false.B
   io.dmem_req_tag:= rindex
-  io.dmem_req_addr:= Bits(0, 32)
+  io.dmem_req_addr:= 0.U(32.W)
   io.dmem_req_cmd:= M_XRD
   io.dmem_req_size:= log2Ceil(8).U
-  io.sfence      := Bool(false)
+  io.sfence      := false.B
 
-  val rindex_reg = Reg(next=rindex)
+  val rindex_reg = RegNext(rindex)
 
 
   switch(rocc_s) {
   is(r_idle) {
     io.rocc_req_rdy := !busy
     when(io.rocc_req_val && !busy){
-      when(io.rocc_funct === UInt(0)){
-        io.rocc_req_rdy := Bool(true)
+      when(io.rocc_funct === 0.U){
+        io.rocc_req_rdy := true.B
         msg_addr  := io.rocc_rs1
         hash_addr := io.rocc_rs2
         println("Msg Addr: "+msg_addr+", Hash Addr: "+hash_addr)
-        io.busy := Bool(true)
-      }.elsewhen(io.rocc_funct === UInt(1)) {
-        busy := Bool(true)
-        io.rocc_req_rdy := Bool(true)
-        io.busy := Bool(true)
+        io.busy := true.B
+      }.elsewhen(io.rocc_funct === 1.U) {
+        busy := true.B
+        io.rocc_req_rdy := true.B
+        io.busy := true.B
         msg_len := io.rocc_rs1
       }
       if (p(Sha3TLB).isDefined) {
-        when (io.rocc_funct === UInt(2)) {
-          io.rocc_req_rdy := Bool(true)
-          io.sfence := Bool(true)
+        when (io.rocc_funct === 2.U) {
+          io.rocc_req_rdy := true.B
+          io.sfence := true.B
         }
       }
     }
@@ -219,12 +218,12 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
     //or the hashing started
       //and there is more to read
       //and the buffer has been absorbed
-    val canRead = busy && ( (read < msg_len || (read === msg_len && msg_len === UInt(0)) ) &&
-                  (!buffer_valid && buffer_count === UInt(0)))
+    val canRead = busy && ( (read < msg_len || (read === msg_len && msg_len === 0.U) ) &&
+                  (!buffer_valid && buffer_count === 0.U))
     when(canRead){
-      //buffer := Vec.fill(round_size_words){Bits(0,W)}
-      buffer_count := UInt(0)
-      mindex := UInt(0)
+      //buffer := Vec.fill(round_size_words){0.U(W.W)}
+      buffer_count := 0.U
+      mindex := 0.U
       mem_s := m_read
     }.otherwise{
       mem_s := m_idle
@@ -234,16 +233,16 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
     //dmem signals
     //only read if we aren't writing
     when(state =/= s_write){
-      io.dmem_req_val := read < msg_len && mindex < UInt(round_size_words)
+      io.dmem_req_val := read < msg_len && mindex < round_size_words.U
       io.dmem_req_addr := msg_addr
       io.dmem_req_tag := mindex
       io.dmem_req_cmd := M_XRD
       io.dmem_req_size := log2Ceil(8).U
 
       when(io.dmem_req_rdy && io.dmem_req_val){
-        mindex := mindex + UInt(1)
-        msg_addr := msg_addr + UInt(8)
-        read := read + UInt(8)//read 8 bytes
+        mindex := mindex + 1.U
+        msg_addr := msg_addr + 8.U
+        read := read + 8.U//read 8 bytes
         if(!fast_mem){
           mem_s := m_wait
         }
@@ -253,8 +252,8 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
         }
       }
       //TODO: don't like special casing this
-      when(msg_len === UInt(0)){
-        read := UInt(1)
+      when(msg_len === 0.U){
+        read := 1.U
         if(!fast_mem){
           mem_s := m_pad
             pindex := words_filled
@@ -263,37 +262,37 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
     }
     if(fast_mem){
       //next state
-      when(mindex < UInt(round_size_words - 1)){
+      when(mindex < (round_size_words - 1).U){
         //TODO: in pad check buffer_count ( or move on to next thread?)
         when(msg_len > read){
           //not sure if this case will be used but this means we haven't
           //sent all the requests yet (maybe back pressure causes this)
-          when((msg_len+UInt(8)) < read){
-            buffer_valid := Bool(false)
+          when((msg_len+8.U) < read){
+            buffer_valid := false.B
             mem_s := m_pad
             pindex := words_filled
           }
           mem_s := m_read
         }.otherwise{
           //its ok we didn't send them all because the message wasn't big enough
-          buffer_valid := Bool(false)
+          buffer_valid := false.B
           mem_s := m_pad
             pindex := words_filled
         }
       }.otherwise{
-        when(mindex < UInt(round_size_words) &&
+        when(mindex < round_size_words.U &&
              !(io.dmem_req_rdy && io.dmem_req_val)){
           //we are still waiting to send the last request
           mem_s := m_read
         }.otherwise{
           //we have reached the end of this chunk
-          mindex := mindex + UInt(1)
-          msg_addr := msg_addr + UInt(8)
-          read := read + UInt(8)//read 8 bytes
+          mindex := mindex + 1.U
+          msg_addr := msg_addr + 8.U
+          read := read + 8.U//read 8 bytes
           //we sent all the requests
-          when((msg_len < (read+UInt(8) ))){
+          when((msg_len < (read+8.U ))){
             //but the buffer still isn't full
-            buffer_valid := Bool(false)
+            buffer_valid := false.B
             mem_s := m_pad
             pindex := words_filled
           }.otherwise{
@@ -309,51 +308,51 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
     when(io.dmem_resp_val) {
       //This is read response
       if(buffer_sram){
-        buffer_wen := Bool(true)
-        buffer_waddr := mindex - UInt(1)
+        buffer_wen := true.B
+        buffer_waddr := mindex - 1.U
         buffer_wdata := io.dmem_resp_data
       }else{
-        buffer(mindex-UInt(1)) := io.dmem_resp_data
+        buffer(mindex-1.U) := io.dmem_resp_data
       }
-      buffer_count := buffer_count + UInt(1)
+      buffer_count := buffer_count + 1.U
 
       //next state
-      when(mindex < UInt(round_size_words- 1)){
+      when(mindex < (round_size_words- 1).U){
         //TODO: in pad check buffer_count ( or move on to next thread?)
         when(msg_len > read){
           //not sure if this case will be used but this means we haven't
           //sent all the requests yet (maybe back pressure causes this)
-          when((msg_len+UInt(8)) < read){
-            buffer_valid := Bool(false)
+          when((msg_len+8.U) < read){
+            buffer_valid := false.B
             mem_s := m_pad
             pindex := words_filled
           }
           mem_s := m_read
         }.otherwise{
           //its ok we didn't send them all because the message wasn't big enough
-          buffer_valid := Bool(false)
+          buffer_valid := false.B
           mem_s := m_pad
           pindex := words_filled
         }
       }.otherwise{
-        when(mindex < UInt(round_size_words) &&
+        when(mindex < round_size_words.U &&
              !(io.dmem_req_rdy && io.dmem_req_val)){
           //we are still waiting to send the last request
           mem_s := m_read
         }.otherwise{
           //we have reached the end of this chunk
-          //mindex := mindex + UInt(1)
-          //read := read + UInt(8)//read 8 bytes
+          //mindex := mindex + 1.U
+          //read := read + 8.U//read 8 bytes
           //we sent all the requests
-          msg_addr := msg_addr + UInt(round_size_words << 3)
-          when((msg_len < (read+UInt(8) ))){
+          msg_addr := msg_addr + (round_size_words << 3).U
+          when((msg_len < (read+8.U ))){
             //but the buffer still isn't full
-            buffer_valid := Bool(false)
+            buffer_valid := false.B
             mem_s := m_pad
             pindex := words_filled
           }.otherwise{
             //we have more to read eventually
-            buffer_valid := Bool(true)
+            buffer_valid := true.B
             mem_s := m_idle
           }
         }
@@ -369,61 +368,61 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
     //only update the buffer if we have already written the mem resp to the word
     when(! (buffer_count < mindex && (pindex >= buffer_count)) ){
       //set everything to 0000_000 after end of message first
-      when(pindex > words_filled && pindex < UInt(round_size_words-1)){
+      when(pindex > words_filled && pindex < (round_size_words-1).U){
         //there is a special case where we need to pad on a word boundary
         //when we have to put in first_pad here rather than just all zeros
-        when(byte_offset === UInt(0) && (pindex === words_filled+UInt(1))
-             && mindex =/= UInt(0)){
+        when(byte_offset === 0.U && (pindex === words_filled+1.U)
+             && mindex =/= 0.U){
           if(buffer_sram){
-            buffer_wen := Bool(true)
+            buffer_wen := true.B
             buffer_waddr := pindex
-            buffer_wdata := Cat(Bits(0,W-8),first_pad)
+            buffer_wdata := Cat(0.U((W-8).W),first_pad)
           }else{
-            buffer(pindex) := Cat(Bits(0,W-8),first_pad)
+            buffer(pindex) := Cat(0.U((W-8).W),first_pad)
           }
         }.otherwise{
           if(buffer_sram){
-            buffer_wen := Bool(true)
+            buffer_wen := true.B
             buffer_waddr := pindex
-            buffer_wdata := Bits(0,W)
+            buffer_wdata := 0.U(W.W)
           }else{
-            buffer(pindex) := Bits(0,W)
+            buffer(pindex) := 0.U(W.W)
           }
         }
-      }.elsewhen(pindex === UInt(round_size_words -1)){
+      }.elsewhen(pindex === (round_size_words -1).U){
         //this is normally when we write the last_pad but we might end up writing both_pad
         //we write both pad if we filled all of the words
           //and all but one of the bytes
-        when(words_filled === UInt(round_size_words - 1)){
-          when(byte_offset === UInt(bytes_per_word -1)){
+        when(words_filled === (round_size_words - 1).U){
+          when(byte_offset === (bytes_per_word -1).U){
             //together with the first pad
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
-                buffer_wen := Bool(true)
+              when(wait_for_sram === false.B){
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(both_pad, buffer_rdata(55,0))
               }
             }else{
               buffer(pindex) := Cat(both_pad, buffer(pindex)(55,0))
             }
-          }.elsewhen(byte_offset === UInt(0)){
+          }.elsewhen(byte_offset === 0.U){
             //do nothing since we hit the exact size of the word
           }
         }.otherwise{
           //at the end of the last word
           //we clear the word if we didn't fill it
-          when(words_filled < UInt(round_size_words - 1)){
+          when(words_filled < (round_size_words - 1).U){
             if(buffer_sram){
-              buffer_wen := Bool(true)
+              buffer_wen := true.B
               buffer_waddr := pindex
-              buffer_wdata := Cat(last_pad, Bits(0,(bytes_per_word-1)*8))
+              buffer_wdata := Cat(last_pad, 0.U(((bytes_per_word-1)*8).W))
             }else{
-              buffer(pindex) := Cat(last_pad, Bits(0,(bytes_per_word-1)*8))
+              buffer(pindex) := Cat(last_pad, 0.U(((bytes_per_word-1)*8).W))
             }
           }.otherwise{
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
-                buffer_wen := Bool(true)
+              when(wait_for_sram === false.B){
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(last_pad, buffer_rdata((bytes_per_word-1)*8-1,0))
               }
@@ -434,13 +433,13 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
         }
       }.elsewhen(pindex === words_filled){
         //normally this is when we need to write the first_pad
-        when(byte_offset =/= UInt(0)) {
+        when(byte_offset =/= 0.U) {
           //not last byte so we put first pad here
-          when(byte_offset === UInt(1)){
+          when(byte_offset === 1.U){
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
+              when(wait_for_sram === false.B){
                 //SRAM was allowed 1 cycle to read
-                buffer_wen := Bool(true)
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(first_pad,buffer_rdata(7,0))
                 //the pindex is still the same as last cycle and buffer_rdata contains buffer(pindex)
@@ -448,60 +447,60 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
             }else{
               buffer(pindex) := Cat(first_pad,buffer(pindex)(7,0))
             }
-          }.elsewhen(byte_offset === UInt(2)){
+          }.elsewhen(byte_offset === 2.U){
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
-                buffer_wen := Bool(true)
+              when(wait_for_sram === false.B){
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(first_pad,buffer_rdata(15,0))
               }
             }else{
               buffer(pindex) := Cat(first_pad,buffer(pindex)(15,0))
             }
-          }.elsewhen(byte_offset === UInt(3)){
+          }.elsewhen(byte_offset === 3.U){
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
-                buffer_wen := Bool(true)
+              when(wait_for_sram === false.B){
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(first_pad,buffer_rdata(23,0))
               }
             }else{
               buffer(pindex) := Cat(first_pad,buffer(pindex)(23,0))
             }
-          }.elsewhen(byte_offset === UInt(4)){
+          }.elsewhen(byte_offset === 4.U){
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
-                buffer_wen := Bool(true)
+              when(wait_for_sram === false.B){
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(first_pad,buffer_rdata(31,0))
               }
             }else{
               buffer(pindex) := Cat(first_pad,buffer(pindex)(31,0))
             }
-          }.elsewhen(byte_offset === UInt(5)){
+          }.elsewhen(byte_offset === 5.U){
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
-                buffer_wen := Bool(true)
+              when(wait_for_sram === false.B){
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(first_pad,buffer_rdata(39,0))
               }
             }else{
               buffer(pindex) := Cat(first_pad,buffer(pindex)(39,0))
             }
-          }.elsewhen(byte_offset === UInt(6)){
+          }.elsewhen(byte_offset === 6.U){
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
-                buffer_wen := Bool(true)
+              when(wait_for_sram === false.B){
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(first_pad,buffer_rdata(47,0))
               }
             }else{
               buffer(pindex) := Cat(first_pad,buffer(pindex)(47,0))
             }
-          }.elsewhen(byte_offset === UInt(7)){
+          }.elsewhen(byte_offset === 7.U){
             if(buffer_sram){
-              when(wait_for_sram === Bool(false)){
-                buffer_wen := Bool(true)
+              when(wait_for_sram === false.B){
+                buffer_wen := true.B
                 buffer_waddr := pindex
                 buffer_wdata := Cat(first_pad,buffer_rdata(55,0))
               }
@@ -511,13 +510,13 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
           }
         }.otherwise{
           //this is only valid if we didn't fill any words
-          when(mindex === UInt(0) && byte_offset === UInt(0)){
+          when(mindex === 0.U && byte_offset === 0.U){
             if(buffer_sram){
-              buffer_wen := Bool(true)
+              buffer_wen := true.B
               buffer_waddr := pindex
-              buffer_wdata := Cat(Bits(0,W-8),first_pad)
+              buffer_wdata := Cat(0.U((W-8).W),first_pad)
             }else{
-              buffer(pindex) := Cat(Bits(0,W-8),first_pad)
+              buffer(pindex) := Cat(0.U((W-8).W),first_pad)
             }
           }
         }
@@ -527,18 +526,18 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
     //next state
     when(next_buff_val){
     //we have received all responses so the buffer is as full as it will get
-      mindex := UInt(0)//reset this for absorb
+      mindex := 0.U//reset this for absorb
       when(areg){
         //we already started absorbing so skip to idle and go to next thread
-        buffer_count := UInt(0)
-        mindex := UInt(0)//reset this for absorb
+        buffer_count := 0.U
+        mindex := 0.U//reset this for absorb
         mem_s := m_idle
-        pindex := UInt(0)
-        wait_for_sram := Bool(true)
+        pindex := 0.U
+        wait_for_sram := true.B
       }.otherwise{
         mem_s := m_absorb
-        pindex := UInt(0)
-        wait_for_sram := Bool(true)
+        pindex := 0.U
+        wait_for_sram := true.B
       }
     }.otherwise{
       //don't move pindex if we haven't received a response for this index
@@ -547,25 +546,25 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
       }.otherwise{
         if(buffer_sram){
           //With SRAM, we need to increment pindex every other cycle
-          when(wait_for_sram === Bool(false)){
-            pindex := pindex + UInt(1)
-            wait_for_sram := Bool(true)
+          when(wait_for_sram === false.B){
+            pindex := pindex + 1.U
+            wait_for_sram := true.B
           }.otherwise{
-            wait_for_sram := Bool(false)
+            wait_for_sram := false.B
           }
         }
         else{
           //Register buffer does not need to wait a cycle
-          pindex := pindex + UInt(1)
+          pindex := pindex + 1.U
         }
         mem_s := m_pad
       }
     }
   }
   is(m_absorb){
-    buffer_valid := Bool(true)
+    buffer_valid := true.B
     //move to idle when we know this thread was absorbed
-    when(aindex >= UInt(round_size_words-1)){
+    when(aindex >= (round_size_words-1).U){
       mem_s := m_idle
     }
   }
@@ -573,26 +572,26 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
   //the code to process read responses
   if(fast_mem){
     when(io.dmem_resp_val) {
-      when(io.dmem_resp_tag(4,0) < UInt(round_size_words)){
+      when(io.dmem_resp_tag(4,0) < round_size_words.U){
         //This is read response
         if(buffer_sram){
-          buffer_wen := Bool(true)
+          buffer_wen := true.B
           buffer_waddr := io.dmem_resp_tag(4,0)
           buffer_wdata := io.dmem_resp_data
         }else{
           buffer(io.dmem_resp_tag(4,0)) := io.dmem_resp_data
         }
-        buffer_count := buffer_count + UInt(1)
+        buffer_count := buffer_count + 1.U
       }
     }
     when(buffer_count >= (mindex) &&
-         (mindex >= UInt(round_size_words))){// ||
+         (mindex >= round_size_words.U)){// ||
          //read(i) > msg_len(i))){
       when(read > msg_len){
         //padding needed
       }.otherwise{
         //next cycle the buffer will be valid
-        buffer_valid := Bool(true)
+        buffer_valid := true.B
       }
     }
   }
@@ -601,27 +600,27 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
 
   switch(state) {
   is(s_idle) {
-  val canAbsorb = busy && (rindex_reg >= UInt(rounds) && buffer_valid && hashed <= msg_len)
+  val canAbsorb = busy && (rindex_reg >= rounds.U && buffer_valid && hashed <= msg_len)
     when(canAbsorb){
-      busy  := Bool(true)
+      busy  := true.B
       state := s_absorb
     }.otherwise{
       state := s_idle
     }
   }
   is(s_absorb){
-    io.write := !areg //Bool(false)
-    areg := Bool(true)
-    aindex := aindex + UInt(1)
-    when(io.aindex >= UInt(round_size_words-1)){
-      rindex := UInt(0)
-      sindex := UInt(0)
-      aindex := UInt(0)
+    io.write := !areg //false.B
+    areg := true.B
+    aindex := aindex + 1.U
+    when(io.aindex >= (round_size_words-1).U){
+      rindex := 0.U
+      sindex := 0.U
+      aindex := 0.U
       //Delayed 1 cycle for sram
-      //areg   := Bool(false)
-      buffer_valid := Bool(false)
-      buffer_count := UInt(0)
-      hashed := hashed + UInt(8*round_size_words)
+      //areg   := false.B
+      buffer_valid := false.B
+      buffer_count := 0.U
+      hashed := hashed + (8*round_size_words).U
       state := s_finish_abs
     }.otherwise{
       state := s_absorb
@@ -629,28 +628,28 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
   }
   is(s_finish_abs){
     //There is a 1 cycle delay for absorb to finish (since the SRAM read is delayed by 1 cycle)
-    areg  := Bool(false)
+    areg  := false.B
     state := s_hash
   }
   is(s_hash){
-    when(rindex < UInt(rounds)){
-      when(sindex < UInt(S-1)){
-        sindex := sindex + UInt(1)
+    when(rindex < rounds.U){
+      when(sindex < (S-1).U){
+        sindex := sindex + 1.U
         io.round := rindex
         io.stage := sindex
-      io.write := Bool(false)
+      io.write := false.B
         state := s_hash
       }.otherwise{
-      sindex := UInt(0)
-      rindex := rindex + UInt(1)
+      sindex := 0.U
+      rindex := rindex + 1.U
       io.round := rindex
-      io.write := Bool(false)
+      io.write := false.B
       state := s_hash
       }
     }.otherwise{
-      io.write := Bool(true)
-      when(hashed > msg_len || (hashed === msg_len && rindex === UInt(rounds))){
-        windex := UInt(0)
+      io.write := true.B
+      when(hashed > msg_len || (hashed === msg_len && rindex === rounds.U)){
+        windex := 0.U
         state := s_write
       }.otherwise{
         state := s_idle
@@ -660,40 +659,40 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
   is(s_write){
     //we are writing
     //request
-    io.dmem_req_val := windex < UInt(hash_size_words)
+    io.dmem_req_val := windex < hash_size_words.U
     io.dmem_req_addr := hash_addr
-    io.dmem_req_tag := UInt(round_size_words) + windex
+    io.dmem_req_tag := round_size_words.U + windex
     io.dmem_req_cmd := M_XWR
 
     when(io.dmem_req_rdy){
-      windex := windex + UInt(1)
-      hash_addr := hash_addr + UInt(8)
+      windex := windex + 1.U
+      hash_addr := hash_addr + 8.U
     }
 
     //response
     when(dmem_resp_val_reg){
       //there is a response from memory
-      when(dmem_resp_tag_reg(4,0) >= UInt(round_size_words)) {
+      when(dmem_resp_tag_reg(4,0) >= round_size_words.U) {
         //this is a response to a write
-        writes_done(dmem_resp_tag_reg(4,0)-UInt(round_size_words)) := Bool(true)
+        writes_done(dmem_resp_tag_reg(4,0)-round_size_words.U) := true.B
       }
     }
     when(writes_done.reduce(_&&_)){
       //all the writes have been responded to
       //this is essentially reset time
-      busy := Bool(false)
+      busy := false.B
 
-      writes_done := Vec.fill(hash_size_words){Bool(false)}
-      windex := UInt(hash_size_words)
-      rindex := UInt(rounds+1)
-      buffer_count := UInt(0)
-      msg_addr := UInt(0)
-      hash_addr := UInt(0)
-      msg_len := UInt(0)
-      hashed := UInt(0)
-      read := UInt(0)
-      buffer_valid := Bool(false)
-      io.init := Bool(true)
+      writes_done := VecInit(Seq.fill(hash_size_words)(false.B))
+      windex := hash_size_words.U
+      rindex := (rounds+1).U
+      buffer_count := 0.U
+      msg_addr := 0.U
+      hash_addr := 0.U
+      msg_len := 0.U
+      hashed := 0.U
+      read := 0.U
+      buffer_valid := false.B
+      io.init := true.B
       state := s_idle
     }.otherwise{
       state := s_write

@@ -2,7 +2,7 @@
 //authors: Colin Schmidt, Adam Izraelevitz
 package sha3
 
-import Chisel._
+import chisel3._
 //import chiseltest.iotesters.PeekPokeTester
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.ArrayBuffer
@@ -11,19 +11,19 @@ import scala.collection.mutable.ArrayBuffer
 class ThetaModule(val W: Int = 64) extends Module {
   //val W = 64
   //val W = RangeParam(64, 8, 64, 8).register(this, "W")
-  val io = new Bundle {
-    val state_i = Vec(5*5, Bits(INPUT, width = W))
-    val state_o = Vec(5*5, Bits(OUTPUT,width = W))
-  }
+  val io = IO(new Bundle {
+    val state_i = Input(Vec(5*5, UInt(W.W)))
+    val state_o = Output(Vec(5*5, UInt(W.W)))
+  })
 
-  val bc = Vec.fill(5){Wire(Bits(width = W))}
+  val bc = Wire(Vec(5, UInt(W.W)))
   for(i <- 0 until 5) {
     bc(i) := io.state_i(i*5+0) ^ io.state_i(i*5+1) ^ io.state_i(i*5+2) ^ io.state_i(i*5+3) ^ io.state_i(i*5+4)
   }
 
   for(i <- 0 until 5) {
-    val t = Wire(Bits(width = W))
-    t := bc((i+4)%5) ^ common.ROTL(bc((i+1)%5), UInt(1), UInt(W))
+    val t = Wire(UInt(W.W))
+    t := bc((i+4)%5) ^ common.ROTL(bc((i+1)%5), 1.U, W.U)
     for(j <- 0 until 5) {
       io.state_o(i*5+j) := io.state_i(i*5+j) ^ t
     }
@@ -31,10 +31,10 @@ class ThetaModule(val W: Int = 64) extends Module {
 }
 
 class Parity extends Module {
-  val io = new Bundle {
-    val in = Vec.fill(5){Bool(INPUT)}
-    val res = Bool(OUTPUT)
-  }
+  val io = IO(new Bundle {
+    val in = Input(Vec(5, Bool()))
+    val res = Output(Bool())
+  })
   io.res := io.in(0) ^ io.in(1) ^ io.in(2) ^ io.in(3) ^ io.in(4)
 }
 /*

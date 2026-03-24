@@ -2,18 +2,18 @@
 //authors: Colin Schmidt, Adam Izraelevitz
 package sha3
 
-import Chisel._
+import chisel3._
 import scala.collection.mutable.HashMap
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 //import chiseltest.iotesters.PeekPokeTester
 
 class IotaModule(val W: Int = 64) extends Module {
-  val io = new Bundle {
-    val state_i = Vec(5*5, Bits(INPUT,W))
-    val state_o = Vec(5*5, Bits(OUTPUT,W))
-    val round = UInt(INPUT, 5)
-  }
+  val io = IO(new Bundle {
+    val state_i = Input(Vec(5*5, UInt(W.W)))
+    val state_o = Output(Vec(5*5, UInt(W.W)))
+    val round = Input(UInt(5.W))
+  })
 
   //TODO: c code uses look up table for this
   for(i <- 0 until 5) {

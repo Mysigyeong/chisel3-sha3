@@ -2,11 +2,11 @@
 //authors: Colin Schmidt, Adam Izraelevitz
 package sha3
 
-import Chisel._
+import chisel3._
 import scala.util.Random
 
 class SHA3_State extends Bundle {
-  val words = Vec.fill(5){ Vec.fill(5) { Bits(width = 64) }}
+  val words = Vec(5, Vec(5, UInt(64.W)))
 }
 
 object common {
