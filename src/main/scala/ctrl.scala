@@ -88,7 +88,7 @@ class CtrlModule(val W: Int, val S: Int)(implicit val p: Parameters) extends Mod
   //Flip-Flop buffer
   val buffer = RegInit(VecInit(Seq.fill(round_size_words)(0.U(W.W))))
 
-  val buffer_raddr = Reg(UInt(log2Up(round_size_words).W))
+  val buffer_raddr = WireDefault(0.U(log2Up(round_size_words).W))
   val buffer_wen = WireDefault(false.B)
   val buffer_waddr = WireDefault(0.U(W.W))
   val buffer_wdata = WireDefault(0.U(W.W))
